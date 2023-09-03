@@ -1,16 +1,14 @@
-#include <Arduino.h>
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include "lib.h"
-//Libraries for LoRa
-#include <SPI.h>
-#include <LoRa.h>
-#include <ArduinoJson.h>
+#include <WiFi.h>                 // Biblioteca WiFi do ESP32 necessária para a acessar á rede
+#include <HTTPClient.h>           // Biblioteca HTTPClirnt do ESP32 necessária para comunicar com a api por HTTP request
+#include <Wire.h>                 // Biblioteca Wire do Arduino necessária para o funcionamento do OLED
+#include <Adafruit_GFX.h>         // Biblioteca GFX https://github.com/adafruit/Adafruit-GFX-Library
+#include <Adafruit_SSD1306.h>     // Biblioteca SSD1306 https://github.com/adafruit/Adafruit_SSD1306
+#include <SPI.h>                  // Biblioteca SPI do Arduino necessária para a comunicação com o modulo LoRa
+#include <LoRa.h>                 // Biblioteca LoRa https://github.com/sandeepmistry/arduino-LoRa
+#include <Arduino_JSON.h>         // Biblioteca JSON https://github.com/arduino-libraries/Arduino_JSON
+#include "lib.h"                  // Biblioteca auxiliar com métodos relacianados com HTTP Requests
 
-//define the pins used by the LoRa transceiver module
+// Pinos do rádio LoRa
 #define SCK 5
 #define MISO 19
 #define MOSI 27
@@ -18,120 +16,111 @@
 #define RST 14
 #define DIO0 26
 
-//433E6 for Asia
-//866E6 for Europe
-//915E6 for North America
-#define BAND 868E6
+#define BAND 868E6                        // Frequência do rádio LoRa
+#define SPREADING_FACTOR 7                // Spreading Factor do rádio LoRa
+#define PREAMBLE_LENGTH 8                 // Preamble Length do rádio LoRa
+#define BANDWIDTH 125E3                   // Bandwidth do rádio LoRa
+#define CODING_RATE 7                     // Coding Rate do rádio LoRa
+#define SYNC_WORD 0x12                    // Sync Word do rádio LoRa
 
-//OLED pins
+// Pinos do display OLED
 #define OLED_SDA 4
 #define OLED_SCL 15
 #define OLED_RST 16
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 64 // OLED display height, in pixels
+#define SCREEN_WIDTH 128                  // OLED display width, in pixels
+#define SCREEN_HEIGHT 64                  // OLED display height, in pixels
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RST);
 
+// Configurações da rede WiFi
+const char* ssid = "NOWO-14C76";
+const char* password = "wZ73kfejn8Wd";
 
-const char* ssid = "";
-const char* password = "";
-
-//Your Domain name with URL path or IP address with path
-String serverName = "http://192.168.0.10:8000/new_message";
-
-// the following variables are unsigned longs because the time, measured in
-// milliseconds, will quickly become a bigger number than can be stored in an int.
-unsigned long lastTime = 0;
-// Timer set to 10 minutes (600000)
-//unsigned long timerDelay = 600000;
-// Set timer to 5 seconds (5000)
-unsigned long timerDelay = 5000;
+// Dominios da API
+String serverName = "http://192.168.0.17:8000/new_packet";
+String getRequest = "http://192.168.0.17:8000/get_status/";
 
 
+String httpGetResponse;
 String LoRaData;
-unsigned long lastPacketRecievedTime=0;
-const byte channel = 4;
-const byte nodeAddress = 0x02;
+unsigned long lastPacketReceivedTime=0;
 int counter = 0;
-StaticJsonDocument<250> receiveJson;
-StaticJsonDocument<250> sendJson;
+JSONVar receivedJson;
+JSONVar sendJson;
+JSONVar httpJson;
 
 
-
-void displayError(int errorCode, String error){
+// Método para demonstrar no OLED o pacote recebido
+void displayReceivedPacket(String data, int rssi){
+    JSONVar receivedJson = JSON.parse(data);
     display.clearDisplay();
     display.setCursor(0, 0);
-    display.print("ERROR");
+    display.print("devEUI:");
+    String deveui = receivedJson["devEUI"];
+    display.print(deveui);
     display.setCursor(0, 20);
-    display.print("Error Code: ");
-    display.print(errorCode);
+    display.print("App:");
+    String app = receivedJson["application"];
+    display.print(app);
     display.setCursor(0, 30);
-    display.print(error);
-    display.display();
-    Serial.println("ERROR OCCURRED");
-    Serial.printf("\n\tError Code: %d", errorCode);
-    Serial.print("\n\tError Message: ");
-    Serial.print(error);
-    Serial.print("\n\n");
-}
+    int dist = receivedJson["data"]["distance"];
+    double lat = receivedJson["data"]["latitude"];
+    double lon = receivedJson["data"]["longitude"];
+    if(dist){
+        display.print("Distance:");
+        display.print(dist);
+        display.print("mm");
+    }else if(lat){
+        display.print("Latitude:");
+        display.print(lat);
+        display.setCursor(0, 40);
+        display.print("Longitude:");
+        display.print(lon);
+    }
+    display.setCursor(0, 55);
 
-void displayRecievePacket(String data, int rssi){
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.print(data);
-    display.setCursor(0, 60);
     display.print("RSSI:");
     display.print(rssi);
     display.display();
-    Serial.printf("\n\tMessage: ");
-    Serial.print(String(data));
+
+    Serial.println("Packet Received");
+    Serial.printf("\tPayload: ");
+    Serial.print(data);
     Serial.printf("\n\tRSSI: %d\n\n", rssi);
 }
 
-void displaySendPacket(byte destinationNode, String data, int messageId){
-    display.clearDisplay();
-    display.setCursor(0, 0);
-    display.print("LORA Sender");
-    display.setCursor(0, 20);
-    display.print("Send packet to: ");
-    display.print(String(destinationNode));
-    display.setCursor(0, 30);
-    display.print("Message Id: ");
-    display.print(messageId);
-    display.setCursor(0, 40);
-    display.print(data);
-    display.display();
-    Serial.printf("Send Packet to 0x%02hhX with Message Id: %d", destinationNode, messageId);
-    Serial.printf("\n\tMessage: ");
-    Serial.print(String(data));
-    Serial.print("\n\n");
+// Mètodo que converte uma string num JSON
+void stringToJson(String data){
+    JSONVar receivedJson = JSON.parse(data);
 }
 
-
+// Método que processa o pacote recebido e retorna o payload numa String
 String receivePacket(int packetSize){
-    lastPacketRecievedTime = millis();
+    lastPacketReceivedTime = millis();
 
     if(packetSize == 0){
-        displayError(-1,"Packet vazio");
         return "";
     }
 
     int rssi = LoRa.packetRssi();
 
-    //byte dataLength = LoRa.read();
-
     String data = "";
 
     while(LoRa.available()){
         byte b = LoRa.read();
-        if(b >= 32){
+        if(32 <= b && b <= 127){
             data += (char)b;
         }
+        if(data[0] != '{')
+            data = data.substring(1);
     }
-    displayRecievePacket(data,rssi);
+
+    JSONVar receivedJson = JSON.parse(data);
+    displayReceivedPacket(data,rssi);
     return data;
 }
 
+// Método para demonstrar no OLED o pacote enviado
 void displaySendPacket(String data){
     display.clearDisplay();
     display.setCursor(0, 0);
@@ -140,42 +129,67 @@ void displaySendPacket(String data){
     display.print("Message Id: ");
     display.print(data);
     display.display();
-    Serial.printf("\n\tMessage: ");
+    Serial.println("Packet Send");
+    Serial.printf("\tPayload: ");
     Serial.print(String(data));
     Serial.print("\n\n");
 }
 
+// Método para enviar um pacote LoRA
 void sendPacket(String data){
     LoRa.beginPacket();
-    LoRa.write(data.length());
     LoRa.print(data);
     LoRa.endPacket();
     displaySendPacket(data);
     counter++;
 }
 
-void setup() {
-    Serial.begin(115200);
+// Método de inicialização do rádio LoRa
+void initLoRa(){
+    // Definir os pinos do rádio LoRa
+    SPI.begin(SCK, MISO, MOSI, SS);
+    LoRa.setPins(SS, RST, DIO0);
+    // Parametrização do rádio
+    LoRa.setSpreadingFactor(SPREADING_FACTOR);
+    LoRa.setPreambleLength(PREAMBLE_LENGTH);
+    LoRa.setSignalBandwidth(BANDWIDTH);
+    LoRa.setCodingRate4(CODING_RATE);
+    LoRa.setSyncWord(SYNC_WORD);
 
+    // Verifica a comunicação com o rádio LoRa
+    if (!LoRa.begin(BAND)) {
+        Serial.println("Starting LoRa failed!");
+        while (1);
+    }
+}
+
+// Método de inicialização do display OLED
+void initOLED(){
     pinMode(OLED_RST, OUTPUT);
     digitalWrite(OLED_RST, LOW);
     delay(20);
     digitalWrite(OLED_RST, HIGH);
 
-    //initialize OLED
     Wire.begin(OLED_SDA, OLED_SCL);
-    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3c, false, false)) { // Address 0x3C for 128x32
+    if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3c, false, false)) {
         Serial.println(F("SSD1306 allocation failed"));
-        for(;;); // Don't proceed, loop forever
+        for(;;);
     }
 
     display.clearDisplay();
     display.setTextColor(WHITE);
     display.setTextSize(1);
     display.setCursor(0,0);
+}
 
-
-    setupWifi(ssid, password);
+// Método de inicialização do WiFi
+void setupWifi(const char * ssid, const char * password){
+    WiFi.begin(ssid, password);
+    Serial.println("Connecting");
+    while(WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+    }
     Serial.println("");
     Serial.print("Connected to WiFi network with IP Address: ");
     Serial.println(WiFi.localIP());
@@ -184,49 +198,51 @@ void setup() {
     display.print("IP: ");
     display.print(WiFi.localIP().toString());
     display.display();
-
-    //SPI LoRa pins
-    SPI.begin(SCK, MISO, MOSI, SS);
-    //setup LoRa transceiver module
-    LoRa.setPins(SS, RST, DIO0);
-    LoRa.setSpreadingFactor(7);
-    LoRa.setPreambleLength(8);
-    LoRa.setSignalBandwidth(125E3);
-    LoRa.setCodingRate4(7);
-    LoRa.setSyncWord(0x12);
-
-    if (!LoRa.begin(BAND)) {
-        Serial.println("Starting LoRa failed!");
-        while (1)
-            ;
-    }
-
-    Serial.println("Timer set to 5 seconds (timerDelay variable), it will take 5 seconds before publishing the first reading.");
 }
 
+// Método de inicialização do dispositivo
+void setup() {
+    Serial.begin(9600);               // Inicialização da comunicação Serial
+
+    initOLED();                       // Inicialização do display OLED
+
+    setupWifi(ssid, password);        // Inicialização da comunicação WiFi
+
+    initLoRa();                       // Inicialização do rádio LoRa
+}
+
+// Método de funcionamento do dispositivo
 void loop() {
+
     int packetSize = LoRa.parsePacket();
+
+    // Se receber um pacote verifica o conteudo
     if (packetSize) {
         LoRaData = receivePacket(packetSize);
-        deserializeJson(receiveJson, LoRaData);
-        sendHTTPPOSTRequest(serverName, LoRaData);
-        if(receiveJson["data"]["status"] == "request"){
-            Serial.println("Received Status Request");
-            sendJson["destination"] = receiveJson["devEUI"];
-            sendJson["data"]["status"] = true;
-            String json;
-            serializeJson(sendJson, json);
+        JSONVar receivedJson = JSON.parse(LoRaData);
+        String status = receivedJson["data"]["status"];
+
+        // Se for um status request pede á API o status do dispositivo
+        if(status == "request"){
+            delay(1000);
+            String devEUI = receivedJson["devEUI"];
+            String domain = getRequest + devEUI;
+
+            httpGetResponse = sendHTTPGETRequest(domain);
+
+            httpJson = JSON.parse(httpGetResponse);
+            bool status = httpJson["status"];
+
+            sendJson["destination"] = devEUI;
+            sendJson["data"]["status"] = status;
+            String json = JSON.stringify(sendJson);
+
+            // Envia o status do dispositivo
             sendPacket(json);
-            Serial.println("Packet Sent "+json);
         }
+
+        // Envia para a API o pacote recebido
+        sendHTTPPOSTRequest(serverName, LoRaData);
     }
-    //Send an HTTP POST request every 10 minutes
-//    if ((millis() - lastTime) > timerDelay) {
-    //Check WiFi connection status
-//        sendHTTPGETRequest(serverName);
-
-//        lastTime = millis();
-//    }
-
 
 }

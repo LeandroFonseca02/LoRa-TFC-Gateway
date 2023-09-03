@@ -1,72 +1,47 @@
-//
-// Created by refr3sh on 3/13/23.
-//
-#include <Arduino.h>
-#include <WiFi.h>
-#include <HTTPClient.h>
-#include <Wire.h>
+#include <WiFi.h>                 // Biblioteca WiFi do ESP32 necessária para a acessar á rede
+#include <HTTPClient.h>           // Biblioteca HTTPClirnt do ESP32 necessária para comunicar com a api por HTTP request
+#include <Wire.h>                 // Biblioteca Wire do Arduino necessária para o funcionamento do OLED
 
 #ifndef WFRQFRQ_LIB_H
 #define WFRQFRQ_LIB_H
 
-#endif //WFRQFRQ_LIB_H
+#endif
 
-void sendHTTPGETRequest(String serverName){
+// Método que envia um HTTP GET Request
+String sendHTTPGETRequest(String serverName){
     if(WiFi.status()== WL_CONNECTED){
         HTTPClient http;
 
-
-        // Your Domain name with URL path or IP address with path
         http.begin(serverName.c_str());
 
-        // If you need Node-RED/server authentication, insert user and password below
-        //http.setAuthorization("REPLACE_WITH_SERVER_USERNAME", "REPLACE_WITH_SERVER_PASSWORD");
-
-        // Send HTTP GET request
+        // Envia o HTTP GET Request
         int httpResponseCode = http.GET();
 
         if (httpResponseCode>0) {
-            Serial.print("HTTP Response code: ");
-            Serial.println(httpResponseCode);
-            String payload = http.getString();
-            Serial.println(payload);
+            String httpGetResponse = http.getString();
+            return httpGetResponse;
         }
         else {
             Serial.print("Error code: ");
             Serial.println(httpResponseCode);
         }
-        // Free resources
         http.end();
     }
     else {
         Serial.println("WiFi Disconnected");
+        return "";
     }
 }
 
+// Método que envia um HTTP POST Request
 void sendHTTPPOSTRequest(String serverName, String json){
 
     HTTPClient http;
-    // Your Domain name with URL path or IP address with path
     http.begin(serverName);
 
-// If you need Node-RED/server authentication, insert user and password below
-//http.setAuthorization("REPLACE_WITH_SERVER_USERNAME", "REPLACE_WITH_SERVER_PASSWORD");
-
-// Specify content-type header
     http.addHeader("Content-Type", "application/json");
 
-// Data to send with HTTP POST
     String httpRequestData = json;
 
-// Send HTTP POST request
     int httpResponseCode = http.POST(httpRequestData);
-}
-
-void setupWifi(const char * ssid, const char * password){
-    WiFi.begin(ssid, password);
-    Serial.println("Connecting");
-    while(WiFi.status() != WL_CONNECTED) {
-        delay(500);
-        Serial.print(".");
-    }
 }
