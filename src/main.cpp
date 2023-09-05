@@ -33,8 +33,8 @@
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RST);
 
 // Configurações da rede WiFi
-const char* ssid = "NOWO-14C76";
-const char* password = "wZ73kfejn8Wd";
+const char* ssid = "";
+const char* password = "";
 
 // Dominios da API
 String serverName = "http://192.168.0.17:8000/new_packet";
